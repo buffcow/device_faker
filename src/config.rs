@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 pub const DPI_MIN: u32 = 120;
 pub const DPI_MAX: u32 = 640;
+pub const TIMEZONE_PROPERTY: &str = "persist.sys.timezone";
 
 fn valid_dpi(value: Option<u32>) -> Option<u32> {
     value.filter(|dpi| (DPI_MIN..=DPI_MAX).contains(dpi))
@@ -352,6 +353,9 @@ pub struct DeviceTemplate {
     /// 临时覆盖系统显示密度（120–640），由 companion 使用 `wm density` 应用
     #[serde(default)]
     pub dpi: Option<u32>,
+    /// 目标进程的 IANA 时区；始终使用进程内 COW，不交给 companion
+    #[serde(default)]
+    pub timezone: Option<String>,
     /// 自定义属性映射表
     #[serde(default)]
     pub custom_props: Option<HashMap<String, String>>,
@@ -361,7 +365,7 @@ pub struct DeviceTemplate {
     /// 要从 /proc/self/maps 中清除的属性映射模式列表（默认继承全局设置）
     #[serde(default)]
     pub hide_maps: Option<Vec<String>>,
-    /// 是否跳过 COW 属性伪造，所有属性直接交给 companion resetprop 处理
+    /// 是否将设备属性交给 companion resetprop 处理（专用 timezone 始终仅在进程内生效）
     /// true 时 getprop（独立进程）和进程内读取一致，适用于属性一致性对比检测
     #[serde(default)]
     pub companion_resetprop: Option<bool>,
@@ -416,6 +420,9 @@ pub struct AppConfig {
     /// 临时覆盖系统显示密度（120–640），由 companion 使用 `wm density` 应用
     #[serde(default)]
     pub dpi: Option<u32>,
+    /// 目标进程的 IANA 时区；始终使用进程内 COW，不交给 companion
+    #[serde(default)]
+    pub timezone: Option<String>,
     /// 自定义属性映射表
     #[serde(default)]
     pub custom_props: Option<HashMap<String, String>>,
@@ -425,7 +432,7 @@ pub struct AppConfig {
     /// 要从 /proc/self/maps 中清除的属性映射模式列表（默认继承全局设置）
     #[serde(default)]
     pub hide_maps: Option<Vec<String>>,
-    /// 是否跳过 COW 属性伪造，所有属性直接交给 companion resetprop 处理
+    /// 是否将设备属性交给 companion resetprop 处理（专用 timezone 始终仅在进程内生效）
     /// true 时 getprop（独立进程）和进程内读取一致，适用于属性一致性对比检测
     #[serde(default)]
     pub companion_resetprop: Option<bool>,
@@ -512,6 +519,7 @@ impl Config {
                 android_version: app.android_version.clone(),
                 sdk_int: app.sdk_int,
                 dpi: valid_dpi(app.dpi),
+                timezone: app.timezone.clone(),
                 custom_props: app.custom_props.clone(),
                 force_denylist_unmount: app
                     .force_denylist_unmount
@@ -549,6 +557,7 @@ impl Config {
                 android_version: template.android_version.clone(),
                 sdk_int: template.sdk_int,
                 dpi: valid_dpi(template.dpi),
+                timezone: template.timezone.clone(),
                 custom_props: template.custom_props.clone(),
                 force_denylist_unmount: template
                     .force_denylist_unmount
@@ -580,6 +589,9 @@ impl Config {
     ///
     /// 注意：`custom_props."ro.product.marketname"` 这类**族头**只把该族头本身算作显式，
     /// 它展开出的分区副本仍走门控。
+    ///
+    /// 专用 `timezone` 不进入此表：由 timezone 模块校验后单独应用进程内 COW。
+    /// 配置了非空 `timezone` 时，冲突的自定义时区属性也从此表与删除列表中排除。
     pub fn build_merged_property_map_with_explicit(
         merged: &MergedAppConfig,
     ) -> (HashMap<String, String>, HashSet<String>) {
@@ -677,9 +689,13 @@ impl Config {
             insert_build_family(&mut map, "version.sdk", &sdk_int.to_string());
         }
 
-        // 自定义属性：已知属性族先整族展开，精确 key 随后覆盖（优先级最高）
+        // 自定义属性：已知属性族先整族展开，精确 key 随后覆盖；专用时区独立处理。
         if let Some(custom_props) = &merged.custom_props {
             for (key, value) in custom_props {
+                // 专用时区配置由 timezone 模块单独应用，不能流入全局 resetprop。
+                if key == TIMEZONE_PROPERTY && merged.timezone_id().is_some() {
+                    continue;
+                }
                 if value == "__DELETE__" {
                     continue;
                 }
@@ -693,6 +709,9 @@ impl Config {
                 }
             }
             for (key, value) in custom_props {
+                if key == TIMEZONE_PROPERTY && merged.timezone_id().is_some() {
+                    continue;
+                }
                 if value == "__DELETE__" {
                     continue;
                 }
@@ -799,6 +818,9 @@ impl Config {
 
         if let Some(custom_props) = &merged.custom_props {
             for (key, value) in custom_props {
+                if key == TIMEZONE_PROPERTY && merged.timezone_id().is_some() {
+                    continue;
+                }
                 if value == "__DELETE__" {
                     delete_props.push(key.clone());
                 }
@@ -835,11 +857,13 @@ pub struct MergedAppConfig {
     pub sdk_int: Option<NumberSetting>,
     /// 最终显示密度覆盖值，超出 120–640 的配置会被忽略
     pub dpi: Option<u32>,
+    /// 独立于设备属性的进程内时区配置
+    pub timezone: Option<String>,
     pub custom_props: Option<HashMap<String, String>>,
     pub force_denylist_unmount: bool,
     /// 要从 /proc/self/maps 中清除的属性映射模式列表
     pub hide_maps: Vec<String>,
-    /// 是否跳过 COW，所有属性走 companion resetprop（默认 false）
+    /// 设备属性是否走 companion resetprop（默认 false；专用 timezone 始终进程内生效）
     pub companion_resetprop: bool,
     /// 模块**自行注入** `custom_props` 的派生键（目前只有指纹解析出的
     /// `ro.build.type` / `ro.build.tags`，见 `complete_device_profile`）。
@@ -849,6 +873,14 @@ pub struct MergedAppConfig {
 }
 
 impl MergedAppConfig {
+    /// 空白值表示不伪装；非空值即保留专用时区字段的优先级（包括无效 ID）。
+    pub fn timezone_id(&self) -> Option<&str> {
+        self.timezone
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+    }
+
     /// 用构建指纹补齐未显式填写的标准字段，并同步指纹内携带的构建信息。
     ///
     /// 显式模板字段始终优先；指纹只负责补空，不会覆盖用户主动设置的
@@ -903,6 +935,99 @@ impl MergedAppConfig {
                     self.derived_props.insert(key.to_string());
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod timezone_tests {
+    use super::{Config, TIMEZONE_PROPERTY};
+
+    #[test]
+    fn timezone_only_templates_and_apps_keep_record_priority() {
+        let config = Config::from_toml(
+            r#"
+            [templates.regional]
+            packages = ["com.example.template", "com.example.override", "com.example.system"]
+            timezone = "America/New_York"
+
+            [[apps]]
+            package = "com.example.override"
+            timezone = " Asia/Tokyo "
+
+            [[apps]]
+            package = "com.example.system"
+        "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.get_merged_config("com.example.template").unwrap().timezone_id(),
+            Some("America/New_York")
+        );
+        assert_eq!(
+            config.get_merged_config("com.example.override").unwrap().timezone_id(),
+            Some("Asia/Tokyo")
+        );
+        // 直接配置整记录替代模板，时区也不能从模板漏进来。
+        assert_eq!(
+            config.get_merged_config("com.example.system").unwrap().timezone_id(),
+            None
+        );
+        assert!(config.get_merged_config("com.example.unconfigured").is_none());
+    }
+
+    #[test]
+    fn dedicated_timezone_never_enters_global_set_or_delete_requests() {
+        for timezone in ["America/New_York", "Invalid/Zone", "__DELETE__"] {
+            for custom in ["Asia/Shanghai", "__EMPTY__", "__DELETE__"] {
+                let content = format!(
+                    r#"
+                    [[apps]]
+                    package = "com.example.app"
+                    companion_resetprop = true
+                    timezone = "{timezone}"
+                    [apps.custom_props]
+                    "persist.sys.timezone" = "{custom}"
+                    "ro.example.keep" = "kept"
+                "#
+                );
+                let config = Config::from_toml(&content).unwrap();
+                let merged = config.get_merged_config("com.example.app").unwrap();
+                let (props, explicit) = Config::build_merged_property_map_with_explicit(&merged);
+                assert!(!props.contains_key(TIMEZONE_PROPERTY));
+                assert!(!explicit.contains(TIMEZONE_PROPERTY));
+                assert!(
+                    !Config::build_delete_props_list(&merged)
+                        .iter()
+                        .any(|key| key == TIMEZONE_PROPERTY)
+                );
+                assert_eq!(props.get("ro.example.keep").map(String::as_str), Some("kept"));
+            }
+        }
+    }
+
+    #[test]
+    fn blank_timezone_preserves_legacy_custom_property_behavior() {
+        for timezone in ["", "   "] {
+            let content = format!(
+                r#"
+                [[apps]]
+                package = "com.example.app"
+                timezone = "{timezone}"
+                [apps.custom_props]
+                "persist.sys.timezone" = "Asia/Tokyo"
+            "#
+            );
+            let config = Config::from_toml(&content).unwrap();
+            let merged = config.get_merged_config("com.example.app").unwrap();
+            assert_eq!(merged.timezone_id(), None);
+            let (props, explicit) = Config::build_merged_property_map_with_explicit(&merged);
+            assert_eq!(
+                props.get(TIMEZONE_PROPERTY).map(String::as_str),
+                Some("Asia/Tokyo")
+            );
+            assert!(explicit.contains(TIMEZONE_PROPERTY));
         }
     }
 }

@@ -9,6 +9,7 @@ mod fg_observer;
 mod file_logger;
 mod hooks;
 mod prop_backend;
+mod timezone;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -335,6 +336,15 @@ impl MyModule {
             cow_props::apply_unreadable_ctx_synth(&prop_map, &explicit_props, &merged.hide_maps)
         {
             warn!("Unreadable-context property synth failed: {e:#}");
+        }
+
+        // 时区始终留在目标进程内，即使设备属性启用了 companion_resetprop。
+        // 必须在属性处理之后清理 Java/libc 缓存；Android 后续 bindApplication
+        // 再次清缓存时，也会从本进程的 persist.sys.timezone 副本重建默认时区。
+        if let Some(timezone) = merged.timezone_id() {
+            if let Err(e) = timezone::spoof_timezone(env, timezone, &merged.hide_maps) {
+                warn!("Timezone spoof failed for {package_name}: {e:#}");
+            }
         }
 
         // ③ DlClose（始终执行）

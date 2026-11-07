@@ -28,6 +28,7 @@ export interface DeviceFakerFormData {
   android_version: string
   sdk_int: string
   dpi: string
+  timezone: string
   characteristics: string
   force_denylist_unmount: boolean | undefined
   companion_resetprop: boolean | undefined
@@ -75,6 +76,7 @@ function createEmptyFormData(): DeviceFakerFormData {
     android_version: '',
     sdk_int: '',
     dpi: '',
+    timezone: '',
     characteristics: '',
     force_denylist_unmount: undefined,
     companion_resetprop: undefined,
@@ -149,6 +151,13 @@ export function formDataToTemplate(formData: DeviceFakerFormData, base?: Templat
     delete template.dpi
   }
 
+  const timezone = formData.timezone.trim()
+  if (timezone) {
+    template.timezone = timezone
+  } else {
+    delete template.timezone
+  }
+
   if (formData.name) {
     template.name = formData.name
   } else {
@@ -210,6 +219,7 @@ export function templateToFormData(template: Template): DeviceFakerFormData {
     android_version: template.android_version || '',
     sdk_int: template.sdk_int ? String(template.sdk_int) : '',
     dpi: template.dpi ? String(template.dpi) : '',
+    timezone: template.timezone || '',
     characteristics: template.characteristics || '',
     force_denylist_unmount: template.force_denylist_unmount,
     companion_resetprop: template.companion_resetprop,
@@ -238,6 +248,7 @@ export function appConfigToFormData(appConfig: AppConfig): DeviceFakerFormData {
     android_version: appConfig.android_version || '',
     sdk_int: appConfig.sdk_int ? String(appConfig.sdk_int) : '',
     dpi: appConfig.dpi ? String(appConfig.dpi) : '',
+    timezone: appConfig.timezone || '',
     characteristics: appConfig.characteristics || '',
     force_denylist_unmount: appConfig.force_denylist_unmount,
     companion_resetprop: appConfig.companion_resetprop,
@@ -274,6 +285,7 @@ export function formDataToAppConfig(formData: DeviceFakerFormData, packageName: 
         ? Number(formData.dpi)
         : undefined,
     characteristics: formData.characteristics,
+    timezone: formData.timezone.trim() || undefined,
     force_denylist_unmount: formData.force_denylist_unmount,
     companion_resetprop: formData.companion_resetprop,
     custom_props: entriesToCustomProps(formData.customProps),

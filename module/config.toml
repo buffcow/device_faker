@@ -193,3 +193,10 @@ manufacturer = "vivo"
 # 【DPI 伪装】
 # 在模板或 [[apps]] 中设置 dpi = 420。
 # 保存原始值，并在应用退后台/退出后自动恢复（切后台约 0.5s 后恢复）。
+
+# 【时区伪装】
+# 在模板或 [[apps]] 中设置 timezone = "America/New_York"（也支持 UTC/GMT）。
+# 可以只设置时区，无需机型字段；省略或留空则跟随系统，重启目标应用生效。
+# 始终仅影响目标进程，即使 companion_resetprop = true 也不会修改系统时区。
+# 非空 timezone 优先于 custom_props."persist.sys.timezone"；设备不支持的 ID 跳过。
+# 不支持 GMT+08:00 这类偏移写法以及 __EMPTY__ / __DELETE__ 标记。

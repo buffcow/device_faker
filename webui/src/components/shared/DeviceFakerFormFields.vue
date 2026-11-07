@@ -107,6 +107,18 @@
           :placeholder="t('templates.placeholders.dpi')"
         />
       </el-form-item>
+
+      <el-form-item
+        :label="t('templates.fields.timezone')"
+        :error="isValidTimezoneId(formData.timezone) ? '' : t('templates.timezone.invalid')"
+      >
+        <el-input
+          v-model="formData.timezone"
+          :placeholder="t('templates.placeholders.timezone')"
+          clearable
+        />
+        <div class="timezone-hint">{{ t('templates.timezone.hint') }}</div>
+      </el-form-item>
     </el-collapse-item>
   </el-collapse>
 
@@ -197,6 +209,7 @@
 import { ChevronDown, Plus, Trash } from '@lucide/vue'
 import { useI18n } from '../../utils/i18n'
 import { useDeviceFakerFormField } from '../../composables/useDeviceFakerForm'
+import { isValidTimezoneId } from '../../utils/timezone'
 
 const formData = useDeviceFakerFormField()
 
@@ -239,6 +252,13 @@ function applySpecialValue(index: number, command: string) {
   color: var(--text-secondary, #909399);
   font-size: 0.875rem;
   padding: 0.25rem 0 0.75rem;
+}
+
+.timezone-hint {
+  color: var(--text-secondary, #909399);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin-top: 0.375rem;
 }
 
 .custom-prop-entry {

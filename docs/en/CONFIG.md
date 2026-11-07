@@ -143,6 +143,30 @@ The following fields can be used in templates or `[[apps]]`. Each field drives b
 
 Set `dpi` (range `120`–`640`) in a template or `[[apps]]`, for example `dpi = 420`. The root companion runs `wm density 420` after saving the current density override. It restores the original value about 2 seconds after the target app goes to the background or exits, and reapplies it when the app returns to the foreground. If there was no override, it restores with `wm density reset`.
 
+### Per-app Timezone
+
+Set `timezone` in a template or `[[apps]]` using an IANA ID supported by the device:
+
+```toml
+[templates.new_york]
+packages = ["com.example.app"]
+timezone = "America/New_York"
+
+[[apps]]
+package = "com.example.other@999"
+timezone = "Asia/Tokyo"
+```
+
+- A timezone-only configuration is supported. Omit the field or leave it blank to follow the system. Stop all target app processes and relaunch after saving.
+- Use region IDs such as `America/New_York`, `Asia/Shanghai`, `Etc/UTC`, or `UTC` / `GMT`. The device's tzdata supplies daylight saving rules.
+- Offsets such as `GMT+08:00` / `+08:00` and the `__EMPTY__` / `__DELETE__` markers are unsupported. Invalid or unknown IDs skip timezone spoofing and log the reason with `debug = true`, instead of silently falling back to GMT.
+- The module patches a private copy of `persist.sys.timezone`, clears the Java default timezone cache, synchronizes `user.timezone` and the process `TZ` environment variable, and calls libc `tzset()`. Intended coverage includes `TimeZone.getDefault()`, `Calendar`, `java.time.ZoneId.systemDefault()`, and libc local time APIs.
+- **The dedicated timezone never goes through global resetprop, even with `companion_resetprop = true`.** A nonblank `timezone` takes precedence over `custom_props."persist.sys.timezone"`, including its empty/delete markers. Without the dedicated field, custom properties keep their existing behavior.
+- Later Java cache resets during app binding or timezone updates reload the private property; no resident hook is needed.
+- System time, system timezone settings, location, and language are unchanged. Separate `exec` processes do not inherit COW properties. WebView renderer processes, libraries using native ICU directly, and explicit app-selected timezones are not guaranteed; device verification is required.
+
+In the WebUI, find “Timezone” under “System” in template and custom app settings. Clear it, save, and restart the app to follow the system again.
+
 ### Custom Properties
 
 `custom_props` sets arbitrary system properties (written verbatim, no partition-variant expansion), usable in both templates and `[[apps]]`, and supports [special marker values](#special-marker-values):
@@ -177,7 +201,7 @@ manufacturer = "Custom"
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `companion_resetprop` | `false` | When `true`, skips COW and sends all properties through the companion `resetprop` (writes the property area directly, bypassing property_service) for system-wide consistent reads; when `false` (default), COW takes priority — it only affects the current process's memory. See [Property Spoofing Mechanism](#property-spoofing-mechanism) |
+| `companion_resetprop` | `false` | When `true`, sends device properties through the companion `resetprop` (writes the property area directly, bypassing property_service) for system-wide consistent reads; when `false` (default), only affects the current process's memory. The dedicated `timezone` always stays process-local. See [Property Spoofing Mechanism](#property-spoofing-mechanism) |
 | `dpi` | — | Temporarily sets system display density via `wm density`; range `120`–`640`; the companion saves and restores the original override |
 | `force_denylist_unmount` | inherits `default_force_denylist_unmount` | Force-enable Zygisk `FORCE_DENYLIST_UNMOUNT` for this app; priority: app > template > global default |
 
@@ -192,11 +216,11 @@ manufacturer = "Custom"
 All apps go through the same unified flow (no mode selection needed):
 
 ```
-① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ DlClose unload
+① JNI overwrite of Build static fields → ② COW or companion resetprop / DPI → ③ Process-local timezone → ④ DlClose unload
 ```
 
 - **COW (default)**: **only the current process is affected**; the module calls DlClose right after writing, leaving zero resident footprint
-- **Companion resetprop (`companion_resetprop = true`)**: all properties are written directly to the property area by the companion process (`skip_svc`, bypassing property_service), so **reads are consistent system-wide**; original values are restored automatically ~2 seconds after the app exits or goes to background, and re-applied on return to foreground
+- **Companion resetprop (`companion_resetprop = true`)**: device properties are written directly to the property area by the companion process (`skip_svc`, bypassing property_service), so **reads are consistent system-wide**; original values are restored automatically ~2 seconds after the app exits or goes to background, and re-applied on return to foreground. The dedicated `timezone` is handled separately and always stays process-local
 
 ## Complete Configuration Example
 

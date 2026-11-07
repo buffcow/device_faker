@@ -77,6 +77,7 @@ import { toast } from 'kernelsu-alt'
 import type { Template } from '../../types'
 import { provideDeviceFakerForm } from '../../composables/useDeviceFakerForm'
 import DeviceFakerFormFields from '../shared/DeviceFakerFormFields.vue'
+import { isValidTimezoneId } from '../../utils/timezone'
 
 const props = defineProps<{
   modelValue: boolean
@@ -160,6 +161,10 @@ async function confirmRenameOverwrite(oldName: string, newName: string) {
 }
 
 async function saveTemplate() {
+  if (!isValidTimezoneId(formData.value.timezone)) {
+    toast(t('templates.timezone.invalid'))
+    return
+  }
   const name = templateNameInput.value.trim()
 
   if (!name) {

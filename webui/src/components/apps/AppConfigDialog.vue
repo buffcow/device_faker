@@ -111,6 +111,7 @@ import { toast } from 'kernelsu-alt'
 import type { InstalledApp, AppConfig } from '../../types'
 import { provideDeviceFakerForm } from '../../composables/useDeviceFakerForm'
 import DeviceFakerFormFields from '../shared/DeviceFakerFormFields.vue'
+import { isValidTimezoneId } from '../../utils/timezone'
 import {
   configKeyScope,
   configWriteKey,
@@ -407,6 +408,10 @@ async function removeTemplateConfig() {
 
 async function saveAppConfig() {
   if (!props.app) return
+  if (hasCustomConfig.value && !isValidTimezoneId(formData.value.timezone)) {
+    toast(t('templates.timezone.invalid'))
+    return
+  }
 
   const packageName = props.app.packageName
   const writeKey = configWriteKey(packageName, resolvedConfigKey.value)

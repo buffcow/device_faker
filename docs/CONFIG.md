@@ -157,6 +157,30 @@ manufacturer = "Samsung"
 
 在模板或 `[[apps]]` 中设置 `dpi`（范围 `120`–`640`），例如 `dpi = 420`。模块先保存当前的DPI；目标应用退后台约 2 秒或退出后恢复原值，回到前台时重新应用。没有备份时会重置`。
 
+### 时区伪装
+
+在模板或 `[[apps]]` 中设置 `timezone`，使用设备支持的 IANA 时区 ID：
+
+```toml
+[templates.new_york]
+packages = ["com.example.app"]
+timezone = "America/New_York"
+
+[[apps]]
+package = "com.example.other@999"
+timezone = "Asia/Tokyo"
+```
+
+- 可单独配置时区，无需填写机型字段。省略或留空表示跟随系统；保存后结束目标应用的所有进程并重新启动。
+- 支持 `America/New_York`、`Asia/Shanghai`、`Etc/UTC` 等区域 ID，以及 `UTC` / `GMT`。夏令时规则由设备的 tzdata 计算，不是固定偏移。
+- 不支持 `GMT+08:00`、`+08:00`、`__EMPTY__`、`__DELETE__`。格式错误或设备不认识的 ID 会跳过时区伪装；`debug = true` 时记录原因，不会静默回退为 GMT。
+- 始终仅影响匹配的应用进程：私有 COW 覆盖 `persist.sys.timezone`，清理 Java 默认时区缓存，同步 `user.timezone`、进程环境变量 `TZ` 并调用 libc `tzset()`。目标覆盖常见的 `TimeZone.getDefault()`、`Calendar`、`java.time.ZoneId.systemDefault()` 和 libc 本地时间读取。
+- **即使 `companion_resetprop = true`，专用时区配置也不会写入全局属性。** 同时配置 `custom_props."persist.sys.timezone"` 时，非空 `timezone` 优先，该自定义项（含删除/置空标记）不再进入普通属性处理流程。未设置专用字段时，自定义属性仍按原有规则处理。
+- Java 后续在应用绑定或系统时区变化时清空缓存，仍会从进程内属性副本重建默认时区；不需要驻留 hook。
+- 不修改系统时钟、系统时区设置、网络定位或语言。独立 `exec` 子进程不会继承 COW 属性副本；WebView 独立渲染进程、直接使用原生 ICU 的库和应用自行指定时区的情况不保证覆盖，需真机验证。
+
+WebUI 的模板和应用自定义配置中，可在“系统”分组填写“时区伪装”；清空后保存即可停用，重启目标应用恢复系统时区。
+
 ### 自定义属性
 
 `custom_props` 可设置任意系统属性（直接写入，无分区变体展开），支持在模板与 `[[apps]]` 中使用，也支持[特殊标记值](#特殊标记值)：
@@ -191,7 +215,7 @@ manufacturer = "Custom"
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `companion_resetprop` | `false` | `true` 时跳过 COW，所有属性交给 companion 进程 `resetprop` 写入（直写属性区，绕过 property_service），全系统读取一致；`false`（默认）时 COW 优先，仅影响当前进程内存。详见 [属性伪造机制](#属性伪造机制) |
+| `companion_resetprop` | `false` | `true` 时设备属性交给 companion 进程 `resetprop` 写入（直写属性区，绕过 property_service），全系统读取一致；`false`（默认）时仅影响当前进程内存。专用 `timezone` 始终仅在进程内生效。详见 [属性伪造机制](#属性伪造机制) |
 | `dpi` | — | 临时设置系统显示 density（`wm density`），范围 `120`–`640`；由 companion 保存并恢复原始 override |
 | `force_denylist_unmount` | 继承 `default_force_denylist_unmount` | 对该应用强制启用 Zygisk `FORCE_DENYLIST_UNMOUNT`；优先级：应用 > 模板 > 全局默认 |
 
@@ -206,11 +230,11 @@ manufacturer = "Custom"
 所有应用统一走同一执行流（无需选择模式）：
 
 ```
-① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop → ③ DPI 伪装 → ④ DlClose 卸载模块
+① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop / DPI → ③ 进程内时区伪装 → ④ DlClose 卸载模块
 ```
 
 - **COW（默认）**：**只影响当前进程**；模块写完立即 DlClose，零驻留
-- **companion resetprop（`companion_resetprop = true`）**：全部属性经 companion 进程直写属性区（`skip_svc`，绕过 property_service），**全系统读取一致**；应用退出或退后台约 2 秒后自动恢复原始值，回到前台重新应用
+- **companion resetprop（`companion_resetprop = true`）**：设备属性经 companion 进程直写属性区（`skip_svc`，绕过 property_service），**全系统读取一致**；应用退出或退后台约 2 秒后自动恢复原始值，回到前台重新应用。专用 `timezone` 独立处理，始终保持进程内隔离
 
 ## 完整配置示例
 

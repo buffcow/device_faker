@@ -36,6 +36,7 @@ export interface DeviceInfo {
   android_version?: string
   sdk_int?: NumericSetting
   dpi?: number
+  timezone?: string
   custom_props?: CustomProps
   force_denylist_unmount?: boolean
   companion_resetprop?: boolean
