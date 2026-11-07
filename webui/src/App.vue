@@ -31,6 +31,29 @@
                     <span class="version">{{ nav.versionDisplay.value }}</span>
                   </h1>
                 </header>
+                <aside
+                  v-if="configStore.configLoadError || configStore.moduleMetaError"
+                  class="load-errors"
+                  role="status"
+                >
+                  <div v-if="configStore.configLoadError">
+                    <strong>{{ t('config.load_failed') }}</strong>
+                    <p class="load-error-detail">{{ configStore.configLoadError }}</p>
+                    <p v-if="configStore.configSource === 'backup'">{{ t('config.backup_used') }}</p>
+                    <p>{{ t('config.save_requires_load') }}</p>
+                  </div>
+                  <div v-if="configStore.moduleMetaError">
+                    <strong>{{ t('config.version_load_failed') }}</strong>
+                    <p class="load-error-detail">{{ configStore.moduleMetaError }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    :disabled="configStore.bootstrapping || configStore.loading"
+                    @click="configStore.bootstrap(true)"
+                  >
+                    {{ t('config.retry_load') }}
+                  </button>
+                </aside>
                 <component
                   :is="page.component"
                   v-if="nav.shouldRenderPage(page.id)"
@@ -62,7 +85,9 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSettingsStore } from './stores/settings'
+import { useConfigStore } from './stores/config'
 import { applyThemeToDocument } from './utils/theme'
+import { useI18n } from './utils/i18n'
 import { usePageNavigation, PAGE_INDEX_BY_ID } from './composables/usePageNavigation'
 import { usePageSwipe } from './composables/usePageSwipe'
 import { useOverscrollBounce } from './composables/useOverscrollBounce'
@@ -89,6 +114,8 @@ let mediaQueryListener: ((event: { matches: boolean }) => void) | null = null
 
 const pageStageRef = ref<HTMLElement | null>(null)
 const settingsStore = useSettingsStore()
+const configStore = useConfigStore()
+const { t } = useI18n()
 const systemPrefersDark = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
 
 const isDark = computed(() => {
@@ -220,6 +247,38 @@ onUnmounted(() => {
   color: var(--text-secondary);
   line-height: 1;
   padding-bottom: 0.1rem;
+}
+
+.load-errors {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0 0.75rem 0.75rem;
+  padding: 0.75rem;
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.load-errors p {
+  margin: 0.3rem 0 0;
+}
+
+.load-error-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.load-errors button {
+  justify-self: start;
+  padding: 0.35rem 0.75rem;
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  font: inherit;
 }
 
 .main-content {

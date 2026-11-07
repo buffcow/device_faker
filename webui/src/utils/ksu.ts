@@ -8,7 +8,7 @@ import type { InstalledApp } from '../types'
  * 判断条件统一是 `kernelsu-alt` 在模块加载时求值出的 `pm.support` / `io.support`：
  *
  * 1. 文件 IO（`io.support`）：
- *    - `readFile` → `cat`
+ *    - `readFile` → `cat`（接口不可用、读取报错或内容为空时）
  *    - `writeFile` → `writeFileViaShell`（heredoc + `mv`）
  *    - `fileExists` → `test -f`
  *    - `mkdir` → `mkdir -p`
@@ -106,9 +106,27 @@ export async function readFile(path: string): Promise<string> {
     return ''
   }
 
-  // TODO(legacy-compat): io 接口不可用时回退 `cat`，兼容期结束后删除该分支
-  const content = io.support ? await readFileViaIo(path) : await execCommand(`cat ${path}`)
-  return content.trim()
+  const failures: string[] = []
+  if (io.support) {
+    try {
+      const content = (await readFileViaIo(path)).trim()
+      if (content) return content
+      failures.push('io: empty content')
+    } catch (err) {
+      failures.push(`io: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // 有的宿主会暴露 io 接口，但不允许打开模块或配置目录中的文件。
+  try {
+    const content = (await execCommand(`cat ${shellQuotePath(path)}`)).trim()
+    if (content) return content
+    failures.push('Shell: empty content')
+  } catch (err) {
+    failures.push(`Shell: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  throw new Error(`${path}\n${failures.join('\n')}`)
 }
 
 /** 经 io 接口整读一个文件（base64 分块读出后按 UTF-8 解码）。 */

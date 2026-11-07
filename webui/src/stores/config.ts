@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Config, Template, AppConfig } from '../types'
-import { readFile, writeFile, fileExists, mkdir } from '../utils/ksu'
+import { readFile, writeFile } from '../utils/ksu'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 import { anyConfigApplies, resolvePackageConfig, resolvePackageMatches } from '../utils/package'
 import { toast } from 'kernelsu-alt'
@@ -18,10 +18,13 @@ const CONFIG_BACKUP_KEY = 'device_faker_config_backup_v1'
 
 export const useConfigStore = defineStore('config', () => {
   const config = ref<Config>({})
-  const moduleVersion = ref('0.0.0')
+  const moduleVersion = ref('--')
   const moduleAuthor = ref('Seyud')
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const configLoadError = ref<string | null>(null)
+  const moduleMetaError = ref<string | null>(null)
+  const configSource = ref<'file' | 'backup' | null>(null)
   const bootstrapping = ref(false)
   const configReady = ref(false)
   const moduleMetaReady = ref(false)
@@ -31,13 +34,19 @@ export const useConfigStore = defineStore('config', () => {
   let bootstrapPromise: Promise<void> | null = null
 
   function saveConfigBackup(content: string) {
-    if (typeof localStorage === 'undefined') return
-    localStorage.setItem(CONFIG_BACKUP_KEY, content)
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(CONFIG_BACKUP_KEY, content)
+    } catch {
+      // 缓存不可写不影响磁盘配置的读取或保存。
+    }
   }
 
   function loadConfigBackup(): string | null {
-    if (typeof localStorage === 'undefined') return null
-    return localStorage.getItem(CONFIG_BACKUP_KEY)
+    try {
+      return typeof localStorage === 'undefined' ? null : localStorage.getItem(CONFIG_BACKUP_KEY)
+    } catch {
+      return null
+    }
   }
 
   function rebuildTemplateOrder() {
@@ -48,42 +57,27 @@ export const useConfigStore = defineStore('config', () => {
   async function loadConfig() {
     loading.value = true
     error.value = null
+    configSource.value = null
+    configLoadError.value = null
     try {
-      let content: string | null = null
-
+      const content = await readFile(CONFIG_PATH)
       try {
-        content = await readFile(CONFIG_PATH)
-      } catch {
-        content = null
-      }
-
-      if (content && content.trim().length > 0) {
         config.value = parseToml(content) as Config
-        rebuildTemplateOrder()
-        saveConfigBackup(content)
-        return
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        throw new Error(`${CONFIG_PATH}\nTOML: ${reason}`)
       }
-
-      const exists = await fileExists(CONFIG_PATH)
-      if (!exists && (!content || content.trim().length === 0)) {
-        // 创建默认配置
-        await mkdir('/data/adb/device_faker/config')
-        config.value = {}
-        rebuildTemplateOrder()
-        await saveConfig()
-        return
-      }
-
-      throw new Error(t('config.load_failed'))
+      rebuildTemplateOrder()
+      configSource.value = 'file'
+      saveConfigBackup(content)
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+      configLoadError.value = e instanceof Error ? e.message : String(e)
       const backup = loadConfigBackup()
       if (backup) {
         try {
           config.value = parseToml(backup) as Config
           rebuildTemplateOrder()
-          error.value = null
-          toast(t('config.backup_used'))
+          configSource.value = 'backup'
           return
         } catch {
           // fallthrough
@@ -97,6 +91,9 @@ export const useConfigStore = defineStore('config', () => {
 
   // 保存配置文件
   async function saveConfig() {
+    if (configSource.value !== 'file') {
+      throw new Error(t('config.save_requires_load'))
+    }
     loading.value = true
     error.value = null
     try {
@@ -127,26 +124,31 @@ export const useConfigStore = defineStore('config', () => {
 
   // 加载模块版本
   async function loadModuleVersion() {
+    moduleMetaError.value = null
     try {
       const content = await readFile(MODULE_PROP_PATH)
-      const versionMatch = content.match(/version=(.+)/)
-      if (versionMatch) {
-        moduleVersion.value = versionMatch[1].trim()
+      const version = content.match(/^[ \t]*version[ \t]*=([^\r\n]*)/m)?.[1].trim()
+      if (!version) {
+        throw new Error(`${MODULE_PROP_PATH}\n${t('config.version_field_missing')}`)
       }
+      moduleVersion.value = version
 
       const authorMatch = content.match(/author=(.+)/)
       if (authorMatch) {
         moduleAuthor.value = authorMatch[1].trim()
       }
-    } catch {
-      // 使用默认版本
+    } catch (e) {
+      moduleVersion.value = '--'
+      moduleMetaError.value = e instanceof Error ? e.message : String(e)
     }
   }
 
-  async function bootstrap() {
-    if (configReady.value && moduleMetaReady.value) {
+  async function bootstrap(retry = false) {
+    if (!retry && configReady.value && moduleMetaReady.value) {
       return
     }
+
+    if (retry && loading.value) return bootstrapPromise
 
     if (!bootstrapPromise) {
       bootstrapping.value = true
@@ -391,6 +393,9 @@ export const useConfigStore = defineStore('config', () => {
     moduleAuthor,
     loading,
     error,
+    configLoadError,
+    moduleMetaError,
+    configSource,
     bootstrapping,
     configReady,
     moduleMetaReady,
